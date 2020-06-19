@@ -1,0 +1,181 @@
+---
+title: "scRNAseq_MonocyteIntegration"
+author: "Mike Caponegro"
+date: "12/23/2019"
+output: html_document
+---
+
+#Libraries
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+library(ggplot2)
+library(plotly)
+library(SeuratWrappers)
+library(affy)
+library(matrixStats)
+library(car)
+library(dplyr)
+library(ggrepel)
+```
+
+```{r LIGER 0.4.2}
+#devtools::install_github("jefferis/RANN@master-L1")
+#devtools::install_github("MacoskoLab/liger@v0.4.2", force = T)
+library(liger)
+packageVersion("liger") #should be '0.4.2"
+```
+
+###The Full_Integrated_Dataset has already been processed. You can load the rds file into R, for exploratroy analysis.####
+
+```{r}
+merge.seurat.liger<-readRDS("Full_Integrated_Dataset.rds") #load data
+
+FeaturePlot(merge.seurat.liger, "CCL2")
+```
+
+
+###The code below describes how the raw downloaded data was integrated, using LIGER.#### 
+
+#Each dataset was filtered by our QC methods, myeloid/microglia cells were subsetted, and then combined into a list object, for downstream and LIGER analysis. 
+
+```{r}
+merge.seurat<-readRDS("ListForLIGER.rds")
+```
+
+```{r}
+##To know the current storage capacity
+memory.limit()
+## To increase the storage capacity
+memory.limit(size=56000)
+options(future.globals.maxSize = 4000 * 1024^2)
+```
+
+#Run additional QC
+```{r}
+merge.seurat[["percent.KCNQ1OT1"]] <- PercentageFeatureSet(merge.seurat, pattern = "KCNQ1OT1")
+
+ERCC.WT.index <- grep(pattern = "^ERCC", x=rownames(merge.seurat), value = FALSE) 
+percent.ERCC.WT <- Matrix::colSums(merge.seurat[ERCC.WT.index, ])/Matrix::colSums(merge.seurat)
+merge.seurat@meta.data$ERCC <- data.frame(percent.ERCC = percent.ERCC.WT)
+
+VlnPlot(merge.seurat, features = c("percent.mt", "percent.ribo", "percent.KCNQ1OT1", "ERCC"), group.by = "orig.ident")
+
+#Remove ERCC from count.data
+merge.seurat <- merge.seurat[-ERCC.WT.index, ]
+
+#New ERCC
+ERCC.WT.index <- grep(pattern = "^ERCC", x=rownames(merge.seurat), value = FALSE) 
+percent.ERCC.WT <- Matrix::colSums(merge.seurat[ERCC.WT.index, ])/Matrix::colSums(merge.seurat)
+merge.seurat@meta.data$ERCC.rm <- data.frame(percent.ERCC = percent.ERCC.WT)
+
+VlnPlot(merge.seurat, features = c("ERCC.rm"), group.by = "orig.ident")
+
+VlnPlot(merge.seurat, features = c("nFeature_RNA", "nCount_RNA"), group.by = "orig.ident")
+
+```
+
+#remove genes only expressed in a few cells
+#Use min.cells in create suerat object, or row counts and remove left tails trnscirtps
+```{r}
+counts<-rowCounts(as.matrix(merge.seurat@assays$RNA@counts))
+counts<-data.frame(counts=counts, row.names = rownames(merge.seurat))
+hist(counts$counts)
+
+counts7<-data.frame(counts=counts[counts$counts>=40,,drop=FALSE]) 
+hist(counts7$counts)
+nrow(counts)-nrow(counts7)
+
+#remove lowly expressed transcripts from seurat object
+gene.keep<-rownames(counts7)
+merge.seurat<-merge.seurat[rownames(merge.seurat) %in% c(gene.keep),]
+
+```
+
+#Integrate with LIGER
+```{r}
+merge.seurat.liger <- NormalizeData(merge.seurat)
+merge.seurat.liger <- FindVariableFeatures(merge.seurat.liger, 
+                                                    selection.method = "vst", nfeatures = 4000)
+merge.seurat.liger <- ScaleData(merge.seurat.liger, split.by = "orig.ident", do.center = FALSE)
+
+merge.seurat.liger <- RunOptimizeALS(merge.seurat.liger, k = 17, split.by = "orig.ident")
+
+merge.seurat.liger <- RunQuantileAlignSNF(merge.seurat.liger, split.by = "orig.ident")
+
+merge.seurat.liger <- RunUMAP(merge.seurat.liger, 
+                                      dims = 1:ncol(merge.seurat.liger[["iNMF"]]), reduction = "iNMF",
+                                      n.neighbors = 40, min.dist = 0.6)
+
+DimPlot(merge.seurat.liger, group.by = c("labeled.ident2")) 
+```
+
+
+#Cell Cylce Scoring - after Normalization 
+```{r}
+merge.seurat.liger <- CellCycleScoring(
+  object = merge.seurat.liger,
+  g2m.features = cc.genes$g2m.genes,
+  s.features = cc.genes$s.genes
+)
+
+VlnPlot(merge.seurat.liger, features = c("S.Score","G2M.Score"), group.by = "labeled.ident2")
+```
+
+#Rename Idents
+```{r}
+
+Idents(merge.seurat.liger)<-'labeled.ident2'
+tmp.cells <- WhichCells(object = merge.seurat.liger, idents = c('GAM'))
+merge.seurat.liger <- SetIdent(merge.seurat.liger, cells = tmp.cells, value = "Tumor Core GAM")
+merge.seurat.liger$labeled.ident2<-Idents(merge.seurat.liger)
+
+
+Idents(merge.seurat.liger)<-'labeled.ident2'
+tmp.cells <- WhichCells(object = merge.seurat.liger, idents = c('Homeostatic Microglia', 'Repopulating Microglia',
+                                                                'Tumor Core GAM', 'PGAM',
+                                                                'Sankowski.GBM', 'Sankowski.Healthy'))
+names<-colnames(merge.seurat.liger)
+tmp.cells.not<-names[!names %in% tmp.cells]
+
+merge.seurat.liger <- SetIdent(merge.seurat.liger, cells = tmp.cells.not, value = "GAM - Other")
+
+merge.seurat.liger$labeled.ident2<-Idents(merge.seurat.liger)
+
+DimPlot(merge.seurat.liger, group.by = "labeled.ident2", pt.size = 1, order=T)
+
+```
+
+#Can use FeaturePlot() to explore gene expression
+```{r}
+FeaturePlot(merge.seurat.liger, "CCL2")
+```
+
+
+#3D projection
+```{r}
+merge.seurat.liger3D<- RunUMAP(merge.seurat.liger, 
+                               dims = 1:ncol(merge.seurat.liger[["iNMF"]]), reduction = "iNMF",
+                                n.neighbors = 40, min.dist = 0.6, n.components = 3L) #match UMAP parametrs 
+
+# Idents(merge.seurat.liger3D)<-'labeled.ident2'
+# merge.seurat.liger3D<-subset(merge.seurat.liger3D, idents = c('PGAM', 'Homeostatic Microglia', 'Repopulating Microglia'))
+
+# Extract tSNE information from Seurat Object
+umap_1 <- merge.seurat.liger[["umap"]]@cell.embeddings[,1]
+umap_2 <- merge.seurat.liger[["umap"]]@cell.embeddings[,2]
+umap_3 <- merge.seurat.liger[["umap"]]@cell.embeddings[,3]
+
+# Visualize what headings are called so that you can extract them to form a dataframe
+#Embeddings(object = merge.seurat.integrated, reduction = "umap")
+
+# Prepare a dataframe for cell plotting
+plotting.data <- FetchData(object = merge.seurat.liger3D, vars = c("UMAP_1", "UMAP_2", "UMAP_3", "seurat_clusters", "labeled.ident2"))
+
+# Make a column of row name identities (these will be your cell/barcode names)
+plotting.data$label<-(colnames(merge.seurat.liger))
+
+plot_ly(data = plotting.data, x=plotting.data$UMAP_1, y=plotting.data$UMAP_2, z=plotting.data$UMAP_3, type="scatter3d",color=plotting.data$labeled.ident2, size=0.1)
+
+```
+
+
