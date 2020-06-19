@@ -1,0 +1,331 @@
+---
+title: "PGAM_DarmanisAnalysis_Caponegro"
+author: "Mike Caponegro"
+date: "6/15/2020"
+output: html_document
+---
+
+
+```{r librares, message=FALSE, warning=FALSE}
+library(Seurat)
+library(ggplot2)
+library(colorspace)
+library(Matrix)
+library(dplyr)
+
+source('./PrctCellExpringGene.R')
+```
+
+
+```{r}
+Darman <- read.csv(file = './GSE84465_GBM_All_data.csv', 
+                   header = TRUE, sep = '')
+Darman.meta <- read.csv(file = './GBM_metadata.csv', 
+                        header = TRUE, sep = '')
+
+colnames(Darman) <- sub("X", "", colnames(Darman)) #remove 'X' symbol in colnames of counts file
+
+#Calculate ERCC abundances on the raw counts before creating a Seurat object
+ERCC.WT.index <- grep(pattern = "^ERCC-", x = rownames(Darman), value = FALSE) # Select row indices and not ERCC names 
+percent.ERCC.WT <- Matrix::colSums(Darman[ERCC.WT.index, ])/Matrix::colSums(Darman)
+
+```
+
+#create Seurat Object
+```{r}
+
+Darman.seurat <- CreateSeuratObject(counts = Darman, meta.data = Darman.meta, project = 'Darmanis')
+
+Darman.seurat@meta.data$ERCC <- data.frame(percent.ERCC = percent.ERCC.WT)
+
+
+Darman.seurat<-Darman.seurat[!grepl("alignment-not-unique", rownames(Darman.seurat)),]
+Darman.seurat<-Darman.seurat[!grepl("ambiguous", rownames(Darman.seurat)),]
+Darman.seurat<-Darman.seurat[!grepl("no-feature", rownames(Darman.seurat)),]
+
+
+#Visualize QC metrics as a violin plot
+VlnPlot(Darman.seurat, features = c("nFeature_RNA", "nCount_RNA", "ERCC"), ncol = 3)
+
+#sctransform
+Darman.seurat <- SCTransform(Darman.seurat, verbose = TRUE, variable.features.n = 3000)
+
+#dimensional reduction by PCA 
+Darman.seurat <- RunPCA(Darman.seurat) 
+
+Darman.seurat.umap <- RunUMAP(Darman.seurat, dims = 1:30,
+                              n.neighbors = 10, min.dist = 0.3)
+DimPlot(Darman.seurat.umap, reduction = "umap")
+```
+
+#Cluster the cells
+```{r}
+
+Darman.seurat.umap <- FindNeighbors(Darman.seurat.umap)
+Darman.seurat.umap <- FindClusters(Darman.seurat.umap, resolution = 0.3)
+DimPlot(Darman.seurat.umap, reduction = "umap", label = T)
+
+```
+
+#Define Clusters
+```{r}
+
+Idents(Darman.seurat.umap)<-"seurat_clusters"
+
+neoplastic <- WhichCells(object = Darman.seurat.umap, idents = c(1,2))
+myeloid <- WhichCells(object = Darman.seurat.umap, idents = c(0,3,4))
+opc <- WhichCells(object = Darman.seurat.umap, idents = c(5)) 
+neuron <- WhichCells(object = Darman.seurat.umap, idents = 5, expression = THY1 & STMN2 & RBFOX3)
+oligo<- WhichCells(object = Darman.seurat.umap, idents = 7)
+astro<- WhichCells(object = Darman.seurat.umap, idents = 6)
+vascular<- WhichCells(object = Darman.seurat.umap, idents = 8)
+
+
+any(neoplastic == neuron)
+
+Darman.seurat.umap <- SetIdent(Darman.seurat.umap, cells = opc, value = "OPCs")
+Darman.seurat.umap <- SetIdent(Darman.seurat.umap, cells = neuron, value = "Neuron")
+Darman.seurat.umap <- SetIdent(Darman.seurat.umap, cells = neoplastic, value = "Neoplastic")
+Darman.seurat.umap <- SetIdent(Darman.seurat.umap, cells = myeloid, value = "Myeloid")
+Darman.seurat.umap <- SetIdent(Darman.seurat.umap, cells = oligo, value = "Oligodendrocytes")
+Darman.seurat.umap <- SetIdent(Darman.seurat.umap, cells = astro, value = "Astrocytes")
+Darman.seurat.umap <- SetIdent(Darman.seurat.umap, cells = vascular, value = "Vascular")
+
+
+Darman.seurat.umap@meta.data$labeled <- Idents(Darman.seurat.umap)
+Idents(Darman.seurat.umap) <- "labeled"
+
+
+col = hcl.colors(7, "Dark3")
+DimPlot(Darman.seurat.umap, reduction = "umap", cols = col, pt.size = 0.9, order = c("Neuron"))
+                                                                     
+```
+
+
+#Define myeloid clusters and subset seurat object
+```{r}
+meyloid.clusters.umap<-subset(Darman.seurat.umap, idents = c("Myeloid")) #subset myeloid clusters
+
+Idents(meyloid.clusters.umap) <- "Location"
+
+Distant<-WhichCells(object = meyloid.clusters.umap, idents = 'Distant')
+
+PGAM <- WhichCells(object = meyloid.clusters.umap, idents = 'Periphery', expression = TMEM119 | P2RY12 | GPR34 | OLFML3 | SLC2A5 | SALL1 | ADORA3)
+
+GAM <- colnames(meyloid.clusters.umap) #All cell names
+GAM <- GAM[!GAM %in% PGAM]
+
+meyloid.clusters.umap <- SetIdent(meyloid.clusters.umap, cells = PGAM, value = "PGAM")
+meyloid.clusters.umap <- SetIdent(meyloid.clusters.umap, cells = GAM, value = "GAM")
+meyloid.clusters.umap <- SetIdent(meyloid.clusters.umap, cells = Distant, value = "Distant")
+
+meyloid.clusters.umap@meta.data$labeled.ident2 <- Idents(meyloid.clusters.umap)
+
+col = hcl.colors(3, "Dark3")
+DimPlot(meyloid.clusters.umap, reduction = "umap", pt.size = 2, cols = col)
+
+table(Idents(meyloid.clusters.umap)) #cell numbers in each cluster
+```
+
+#Re-UMAP cells with xsitsing PCAs
+```{r}
+meyloid.clusters.umap<-RunUMAP(meyloid.clusters.umap, n.neighbors = 5, min.dist = 0.5, 
+                                n.epochs = 500,
+                                dims = 1:30, 
+                                verbose = FALSE)
+
+DimPlot(meyloid.clusters.umap, reduction = "umap", pt.size = 2, order = c("Distant", "GAM", "PGAM"))
+```
+
+#Miroglia-specific gene expression 
+```{r}
+
+FeaturePlot(meyloid.clusters.umap, features = c('TMEM119', 'P2RY12', 'GPR34',
+                                                'OLFML3', 'SLC2A5', 'SALL1', 'ADORA3',
+                                                'PTPRC', 'FCGR3A'), pt.size=0.05)
+
+t<-PrctCellExpringGene(meyloid.clusters.umap ,genes =c('TMEM119', 'P2RY12', 'GPR34',
+                                                    'OLFML3', 'SLC2A5', 'SALL1', 'ADORA3'), 
+                                                    group.by = "Location")
+
+t<-subset(t, Feature !='Distant')
+t$Cell_proportion<-t$Cell_proportion*100
+t$Cell_proportion<-round(t$Cell_proportion, 2)
+t$Markers<-factor(t$Markers, c('TMEM119', 'P2RY12', 'GPR34',
+                                                'OLFML3', 'SLC2A5', 'SALL1', 'ADORA3'))
+print(t)
+```
+
+#FindMarkers and create ranked list for GSEA
+```{r}
+PGAMmarkers<-FindMarkers(meyloid.clusters.umap, ident.1 = 'PGAM', only.pos = TRUE)
+
+x <- PGAMmarkers
+head(x)
+x$Gene <-rownames(x)
+x$fcsign <- sign(x$avg_logFC)
+x$logP=-log10(x$p_val_adj)
+x$metric= x$logP/x$fcsign
+y<-x[,c('Gene', 'metric')]
+head(y)
+```
+
+#GSEA and cluster profiler
+
+```{r GSEA, message=FALSE, warning=FALSE}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+geneList <- y[,2]
+names(geneList) <- as.character(y[,1])
+geneList <- sort(geneList, decreasing = TRUE)
+gene<-names(geneList)
+
+ids <- bitr(names(geneList), fromType="SYMBOL", toType=c("UNIPROT", "ENSEMBL", "ENTREZID"), OrgDb="org.Hs.eg.db")
+```
+
+```{r}
+ego <- enrichGO(gene          = ids$ENTREZID ,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                maxGSSize = 2000,
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05,
+        readable      = TRUE)
+head(ego)
+
+ego@result<-ego@result[order(ego@result$Count, decreasing = TRUE),]
+
+dotplot(ego, showCategory=20)
+
+heatplot(ego, foldChange=geneList)
+
+```
+
+#iTALK
+iTalk Package
+Link: https://github.com/Coolgenome/iTALK/
+```{r , include=FALSE}
+# if(!require(devtools)) install.packages("devtools");
+# devtools::install_github("Coolgenome/iTALK", build_vignettes = TRUE)
+library(iTALK)
+library(circlize)
+library(plyr)
+```
+
+#Compute between Neoplastic, GAM, and GAM
+```{r}
+Idents(Darman.seurat.umap) <- "labeled"
+NEO<-WhichCells(Darman.seurat.umap, idents = "Neoplastic")
+PGAM<-WhichCells(meyloid.clusters.umap, idents = "PGAM")
+GAM<-WhichCells(meyloid.clusters.umap, idents = "GAM")
+
+Darman.seurat.umap.split <- subset(Darman.seurat.umap, cells = c(NEO, GAM, PGAM))
+
+Darman.seurat.umap.split <- SetIdent(Darman.seurat.umap.split, cells = PGAM, value = "PGAM")
+Darman.seurat.umap.split <- SetIdent(Darman.seurat.umap.split, cells = GAM, value = "GAM")
+
+Darman.seurat.umap.split@meta.data$labeled <- Idents(Darman.seurat.umap.split)
+Idents(Darman.seurat.umap.split) <- "labeled"
+
+DimPlot(Darman.seurat.umap.split, reduction = "umap")
+     
+table(Idents(Darman.seurat.umap.split))
+```
+
+```{r}
+data<-GetAssayData(object = Darman.seurat.umap.split)
+ex<-as.matrix(data)
+df<-as.data.frame(t(ex))
+df$cell_type<-Darman.seurat.umap.split$labeled
+highly_exprs_genes<-rawParse(df,top_genes=50,stats='mean')
+```
+
+#Cytokines
+```{r}
+res_cat<-FindLR(highly_exprs_genes,datatype='mean count',comm_type='cytokine')
+res_cat<-res_cat[order(res_cat$cell_from_mean_exprs*res_cat$cell_to_mean_exprs,decreasing=T),]
+
+cell_col<-structure(c( 'blue', '#29a329','#800080'),names=c('Neoplastic', 'GAM', 'PGAM'))
+
+res_cat$cell_type <- as.factor(res_cat$cell_from)
+res_cat$cell_type_col <- revalue(res_cat$cell_type, c("Neoplastic"="blue", "GAM"="#29a329", "PGAM" = "#800080"))
+res_cat$cell_type_col <- as.character(res_cat$cell_type_col)
+
+
+#top 20 ligand-receptor pairs
+LRPlot(res_cat[1:30,],datatype='mean count', cell_col=cell_col,
+       link.arr.lwd=res_cat$cell_from_mean_exprs[1:30],
+       link.arr.width = res_cat$cell_to_mean_exprs[1:30]+4, 
+       link.arr.col= res_cat$cell_type_col[1:30]) 
+
+LRgenes<-c(res_cat$ligand[1:30], res_cat$receptor[1:30])
+
+```
+
+#Compute between Neoplastic, Myeloid, and Neurons
+```{r}
+Idents(Darman.seurat.umap) <- "labeled"
+NEO<-WhichCells(Darman.seurat.umap, idents = "Neoplastic")
+Neuro<-WhichCells(Darman.seurat.umap, idents = "Neuron")
+Myeloid<-WhichCells(Darman.seurat.umap, idents = "Myeloid")
+
+Darman.seurat.umap.split <- subset(Darman.seurat.umap, cells = c(NEO, Neuro, Myeloid))
+
+Darman.seurat.umap.split@meta.data$labeled <- Idents(Darman.seurat.umap.split)
+Idents(Darman.seurat.umap.split) <- "labeled"
+
+DimPlot(Darman.seurat.umap.split, reduction = "umap")
+     
+table(Idents(Darman.seurat.umap.split))
+```
+
+```{r}
+data<-GetAssayData(object = Darman.seurat.umap.split)
+ex<-as.matrix(data)
+df<-as.data.frame(t(ex))
+df$cell_type<-Darman.seurat.umap.split$labeled
+#df$compare_group<-(macrophage.cds$dataset)
+# find top 50 percent highly expressed genes
+highly_exprs_genes<-rawParse(df,top_genes=50,stats='mean')
+```
+
+#Growth Factors
+```{r}
+res_cat<-FindLR(highly_exprs_genes,datatype='mean count',comm_type='growth factor')
+res_cat<-res_cat[order(res_cat$cell_from_mean_exprs*res_cat$cell_to_mean_exprs,decreasing=T),]
+
+cell_col<-structure(c('grey80', 'blue', 'forestgreen'),names=c('Neuron', 'Neoplastic', 'Myeloid'))
+
+res_cat$cell_type <- as.factor(res_cat$cell_from)
+res_cat$cell_type_col <- revalue(res_cat$cell_type, c("Neuron"="grey80", "Neoplastic" = "blue",
+                                                      "Myeloid"="forestgreen"))
+res_cat$cell_type_col <- as.character(res_cat$cell_type_col)
+
+#top 20 ligand-receptor pairs
+LRPlot(res_cat[1:30,],datatype='mean count', cell_col=cell_col,
+       link.arr.lwd=res_cat$cell_from_mean_exprs[1:30],
+       link.arr.width = res_cat$cell_to_mean_exprs[1:30]+4, 
+       link.arr.col= res_cat$cell_type_col[1:30]) 
+```
+
+#other
+```{r}
+res_cat<-FindLR(highly_exprs_genes,datatype='mean count',comm_type='other')
+res_cat<-res_cat[order(res_cat$cell_from_mean_exprs*res_cat$cell_to_mean_exprs,decreasing=T),]
+
+cell_col<-structure(c('grey80', 'blue', 'forestgreen'),names=c('Neuron', 'Neoplastic', 'Myeloid'))
+
+res_cat$cell_type <- as.factor(res_cat$cell_from)
+res_cat$cell_type_col <- revalue(res_cat$cell_type, c("Neuron"="grey80", "Neoplastic" = "blue",
+                                                      "Myeloid"="forestgreen"))
+res_cat$cell_type_col <- as.character(res_cat$cell_type_col)
+
+#top 20 ligand-receptor pairs
+LRPlot(res_cat[1:30,],datatype='mean count', cell_col=cell_col,
+       link.arr.lwd=res_cat$cell_from_mean_exprs[1:30],
+       link.arr.width = res_cat$cell_to_mean_exprs[1:30]+4, 
+       link.arr.col= res_cat$cell_type_col[1:30]) 
+
+```

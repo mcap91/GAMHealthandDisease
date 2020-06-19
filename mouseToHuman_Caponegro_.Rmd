@@ -1,0 +1,91 @@
+---
+title: "mouseToHuman_Caponegro"
+author: "Mike Caponegro"
+date: "4/21/2020"
+output: html_document
+---
+
+```{r}
+library(Seurat)
+library(ggplot2)
+```
+
+
+#read in data
+```{r}
+Huang.seurat.umap<-readRDS("C:/Users/mcap9/Desktop/R Projects/scRNAseq/main/seurat.objects/Huang.seurat.umap.rds") #read in the .rds
+PCAPlot(Huang.seurat.umap, group.by = c("labeled.ident2")) + ggtitle("PCA")
+DimPlot(Huang.seurat.umap, group.by = c("labeled.ident2")) + ggtitle("UMAP")
+```
+
+#After cleaning, clustering, naming, etc, pull expression and metadata matrix, to convert gene names
+#this data is already processed
+```{r}
+Huang.counts<-as.data.frame(Huang.seurat.umap@assays$RNA@counts)
+Huang.meta<-Huang.seurat.umap@meta.data
+```
+
+#generate homolog table
+```{r}
+
+musGenes <- rownames(Huang.counts)#gene names from mouse counts files
+
+#get table of mouse and human genes, to use for data frame merging 
+require("biomaRt")
+human = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+
+filters<-listFilters(mouse) #using "mgi_symbol" to convert here, can also use "ensembl_gene_id", etc.
+
+genesV2 = getLDS(attributes = c("mgi_symbol"), filters = "mgi_symbol", values = musGenes , mart = mouse, attributesL = c("hgnc_symbol"), martL = human, uniqueRows=T)
+
+#I like to keep track of transcripts that may be lost
+print(paste(nrow(genesV2), "human homologs pulled"))
+
+```
+
+#Filter for unique homologs 
+```{r}
+#some musGenes map to multiple Human genes, we will remove them, rendering only direct homologs, or unique
+#musGenes mapping to the same Human gene
+dups<-genesV2[(duplicated(genesV2$MGI.symbol)),]
+print(paste(nrow(dups), "duplicated mouse to single human map",
+            paste("(", round(nrow(dups)/nrow(genesV2)*100,2),"%)")))
+
+nondups<-genesV2[!(duplicated(genesV2$MGI.symbol)),]
+print(paste(nrow(nondups), "non-duplicated mouse to single human map",
+            paste("(", round(nrow(nondups)/nrow(genesV2)*100,2),"%)")))
+
+nondups<-nondups[nondups$MGI.symbol %in% c(rownames(Huang.counts)),] #you may convert transcripts not in your counst matirx
+
+```
+
+#convert geneIDs of counts matrix
+```{r}
+Huang.counts.2<-Huang.counts #you can make a new counts matrix, to preserve the original mouse one
+
+Huang.counts.2<- Huang.counts.2[rownames(Huang.counts.2)%in% c(nondups$MGI.symbol),] #keep only nondup mouse homologs
+
+dupgenes<-nondups[duplicated(nondups$HGNC.symbol),]
+
+rownames(Huang.counts.2)<-make.unique(nondups$HGNC.symbol) 
+
+print(head(Huang.counts.2))
+```
+
+#recreate you seurat object, with coverted geneIDs, and original metadata
+```{r}
+Huang.seurat.convert<-CreateSeuratObject(Huang.counts.2, meta.data = Huang.meta, project = "Huang Converted")
+```
+
+#dimensional reduction here done only for comparison with above. I took the converted object, and integrated the raw counts with LIGER
+```{r}
+Huang.seurat.convert <- SCTransform(Huang.seurat.convert, verbose = FALSE)
+Huang.seurat.convert <- RunPCA(Huang.seurat.convert)
+
+Huang.seurat.convert <- RunUMAP(Huang.seurat.convert, dims = 1:30 )
+
+PCAPlot(Huang.seurat.convert,group.by = c("labeled.ident2")) + ggtitle("PCA")
+DimPlot(Huang.seurat.convert, group.by = c("labeled.ident2")) + ggtitle("UMAP")
+
+```
