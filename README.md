@@ -13,6 +13,9 @@ This repository contains R markdown files used for analysis, the integrated data
 
 ![image](https://user-images.githubusercontent.com/36866996/116314570-1ec92900-a764-11eb-8b4c-3d88d45590a5.png)
 
+![image](https://user-images.githubusercontent.com/36866996/116322802-a701fb00-a771-11eb-9abc-146fb326401a.png)
+
+
 Caponegro et. al. *Glia*. 2021. https://onlinelibrary.wiley.com/doi/abs/10.1002/glia.23991
 
 Data can be viewed at https://mcap91.shinyapps.io/GAMHealthandDisease/
