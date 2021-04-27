@@ -5,6 +5,7 @@
 This repository contains R markdown files used for analysis, the integrated dataset, and links to references and a shiny app for exploratory analyssis. 
 
 [LIGER (Linked Inference of Genomic Experimental Relationships)](https://github.com/welch-lab/liger)
+
 [Integrating Seurat objects using LIGER](https://github.com/satijalab/seurat-wrappers/blob/master/docs/liger.md)
 
 ## Overview of dataset
