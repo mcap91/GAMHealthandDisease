@@ -3,7 +3,9 @@
 https://github.com/welch-lab/liger
 https://github.com/satijalab/seurat-wrappers/blob/master/docs/liger.md
 
-![image](https://user-images.githubusercontent.com/36866996/116314383-e3c6f580-a763-11eb-858c-fc8e8b531d24.png)
+![image](https://user-images.githubusercontent.com/36866996/116314537-11ac3a00-a764-11eb-89e6-53fd73dac758.png)
+
+![image](https://user-images.githubusercontent.com/36866996/116314570-1ec92900-a764-11eb-8b4c-3d88d45590a5.png)
 
 Caponegro et. al. Glia. 2021. https://onlinelibrary.wiley.com/doi/abs/10.1002/glia.23991
 
