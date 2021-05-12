@@ -1,8 +1,8 @@
 # A distinct microglial subset at the tumor–stroma interface of glioma
 
-11k myeloid cells from 48 samples were collected acorss 7 published single-cell datasets and integrated for dimensional reduction using LIGER.
+11k myeloid cells from 48 samples were collected across 7 published single-cell datasets and integrated for dimensional reduction using LIGER.
 
-This repository contains R markdown files used for analysis, the integrated dataset, and links to references and a shiny app for exploratory analyssis. 
+This repository contains R markdown files used for analysis, the integrated dataset, and links to references and a shiny app for exploratory analysis. 
 
 [LIGER (Linked Inference of Genomic Experimental Relationships)](https://github.com/welch-lab/liger)
 
